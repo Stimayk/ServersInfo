@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net8.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="CounterStrikeSharp.API" Version="1.0.247" />
+        <PackageReference Include="Okolni.Source.Query" Version="2.1.0" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Update="lang\**\*.*" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
+	<ItemGroup>
+		<Reference Include="MenuManagerApi">
+			<HintPath>C:\Users\Stimayk\Documents\GitHub\WpPluginSources\MenuManagerApi\MenuManagerApi.dll</HintPath>
+		</Reference>
+	</ItemGroup>
+
+</Project>
