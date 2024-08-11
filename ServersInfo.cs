@@ -27,10 +27,7 @@ namespace ServersInfo
         private int _currentServerIndex = 0;
         private readonly Random _random = new();
 
-        public void OnConfigParsed(ServersInfoConfig config)
-        {
-            Config = config;
-        }
+        public void OnConfigParsed(ServersInfoConfig config) => Config = config;
 
         public override void OnAllPluginsLoaded(bool hotReload)
         {
@@ -50,16 +47,13 @@ namespace ServersInfo
 
             if (info != null)
             {
-                string? connectIP = GetConnectIP(server.Value); // Получаем IP для подключения
-                string serverInfo = string.Format(Localizer["ChatADV"], info.Name, info.Map, info.Players, info.MaxPlayers, connectIP); // Используем connectIP для отображения
+                string? connectIP = GetConnectIP(server.Value);
+                string serverInfo = string.Format(Localizer["ChatADV"], info.Name, info.Map, info.Players, info.MaxPlayers, connectIP);
                 Server.NextFrame(() => Server.PrintToChatAll(serverInfo));
             }
         }
 
-        private int GetNextServerIndex(int serverCount)
-        {
-            return Config.Settings.Order ? (_currentServerIndex = (_currentServerIndex + 1) % serverCount) : _random.Next(serverCount);
-        }
+        private int GetNextServerIndex(int serverCount) => Config.Settings.Order ? (_currentServerIndex = (_currentServerIndex + 1) % serverCount) : _random.Next(serverCount);
 
         private async Task<InfoResponse?> GetServerInfo(string? ip, string? displayName)
         {
@@ -201,9 +195,6 @@ namespace ServersInfo
 
         private static Action<CCSPlayerController> OpenBackMenu(IMenu menu) => p => menu.Open(p);
 
-        private string? GetConnectIP(ServerInfo server)
-        {
-            return !string.IsNullOrEmpty(server.AliasIP) ? server.AliasIP : server.IP;
-        }
+        private static string? GetConnectIP(ServerInfo server) => !string.IsNullOrEmpty(server.AliasIP) ? server.AliasIP : server.IP;
     }
 }
