@@ -16,7 +16,7 @@ namespace ServersInfo
         public override string ModuleName => "ServersInfo";
         public override string ModuleDescription => "";
         public override string ModuleAuthor => "E!N";
-        public override string ModuleVersion => "v1.0.0";
+        public override string ModuleVersion => "v1.1";
 
         private IMenuApi? _menuApi;
         private readonly PluginCapability<IMenuApi?> _menuCapability = new("menu:nfcore");
@@ -27,25 +27,25 @@ namespace ServersInfo
         private int _currentServerIndex = 0;
         private readonly Random _random = new();
 
-        public void OnConfigParsed(ServersInfoConfig config)
-        {
-            Config = config;
-        }
+        public void OnConfigParsed(ServersInfoConfig config) => Config = config;
 
-        public override void Load(bool hotReload)
+        public override void OnAllPluginsLoaded(bool hotReload)
         {
             _menuApi = _menuCapability.Get();
+            StartServerInfoTimer();
+        }
 
+        private void StartServerInfoTimer()
+        {
             _serverInfoTimer = new System.Timers.Timer(Config.Settings.AdvTime * 1000);
-            _serverInfoTimer.Elapsed += OnServerInfoTimerElapsed;
+            _serverInfoTimer.Elapsed += async (sender, e) => await OnServerInfoTimerElapsed();
             _serverInfoTimer.Start();
         }
 
-        private async void OnServerInfoTimerElapsed(object? sender, System.Timers.ElapsedEventArgs e)
+        private async Task OnServerInfoTimerElapsed()
         {
             var servers = Config.Modes.SelectMany(m => m.Value.Servers).ToList();
-            int serverIndex = GetNextServerIndex(servers.Count);
-            var server = servers[serverIndex];
+            var server = servers[GetNextServerIndex(servers.Count)];
             var info = await GetServerInfo(server.Value.IP, server.Value.DisplayName);
 
             if (info != null)
@@ -55,36 +55,57 @@ namespace ServersInfo
             }
         }
 
-        private int GetNextServerIndex(int serverCount)
-        {
-            return Config.Settings.Order ? (_currentServerIndex = (_currentServerIndex + 1) % serverCount) : _random.Next(serverCount);
-        }
+        private int GetNextServerIndex(int serverCount) =>
+            Config.Settings.Order ? (_currentServerIndex = (_currentServerIndex + 1) % serverCount) : _random.Next(serverCount);
 
         private async Task<InfoResponse?> GetServerInfo(string? ip, string? displayName)
         {
-            if (string.IsNullOrEmpty(ip) || string.IsNullOrEmpty(displayName))
-                return null;
+            if (string.IsNullOrEmpty(ip) || string.IsNullOrEmpty(displayName)) return null;
 
+            var (connectIP, port) = ParseIP(ip);
+            if (port == null) return null;
+
+            connectIP = GetAliasIPIfExists(connectIP, displayName);
+
+            return await QueryServerInfo(connectIP, port.Value, displayName);
+        }
+
+        private (string connectIP, int? port) ParseIP(string ip)
+        {
             var ipParts = ip.Split(':');
             if (ipParts.Length != 2 || !int.TryParse(ipParts[1], out int port))
             {
-                Logger.LogError($"Invalid IP address or port format for server {displayName}: {ip}");
-                return null;
+                Logger.LogError($"Invalid IP address or port format: {ip}");
+                return (string.Empty, null);
             }
+            return (ipParts[0], port);
+        }
 
-            var queryConnection = new QueryConnection { Host = ipParts[0], Port = port };
+        private string GetAliasIPIfExists(string connectIP, string? displayName)
+        {
+            var serverInfo = Config.Modes.SelectMany(m => m.Value.Servers)
+                .FirstOrDefault(s => s.Value.DisplayName == displayName);
+            return serverInfo.Value?.AliasIP?.Split(':')[0] ?? connectIP;
+        }
+
+        private async Task<InfoResponse?> QueryServerInfo(string connectIP, int port, string displayName)
+        {
+            var queryConnection = new QueryConnection { Host = connectIP, Port = port };
             try
             {
                 ((IQueryConnection)queryConnection).Connect(5000);
                 var info = await ((IQueryConnection)queryConnection).GetInfoAsync();
-                ((IQueryConnection)queryConnection).Disconnect();
                 return info;
             }
             catch (Exception ex)
             {
-                Logger.LogError($"Failed to query server {displayName} ({ip}): {ex.Message}");
+                Logger.LogError($"Failed to query server {displayName} ({connectIP}:{port}): {ex.Message}");
+                return null;
             }
-            return null;
+            finally
+            {
+                ((IQueryConnection)queryConnection).Disconnect();
+            }
         }
 
         [ConsoleCommand("css_servers", "List of all servers")]
@@ -102,33 +123,32 @@ namespace ServersInfo
 
         private async Task ShowServersForMode(CCSPlayerController player, string modeName, IMenu modesMenu)
         {
-            if (!Config.Modes.TryGetValue(modeName, out var value))
+            if (!Config.Modes.TryGetValue(modeName, out var mode))
             {
                 player.PrintToChat("Invalid mode selected.");
                 return;
             }
 
             var serversMenu = _menuApi!.NewMenu(Localizer["MenuServersTitle", modeName], OpenBackMenu(modesMenu));
-            foreach (var server in value.Servers)
+            foreach (var server in mode.Servers)
             {
                 var info = await GetServerInfo(server.Value.IP, server.Value.DisplayName);
                 string serverItemName = info != null ? $"{server.Value.DisplayName} ({info.Players}/{info.MaxPlayers})" : $"{server.Value.DisplayName} (Offline)";
-                serversMenu.AddMenuOption(serverItemName, (_, _) =>
-                {
-                    if (info != null && server.Value.IP != null)
-                    {
-                        ShowServerInfoMenu(player, server.Value.DisplayName, info, serversMenu, server.Value);
-                    }
-                    else
-                    {
-                        if (!string.IsNullOrEmpty(server.Value.DisplayName))
-                        {
-                            player.PrintToChat($"{Localizer["ServerOffline", server.Value.DisplayName]}");
-                        }
-                    }
-                });
+                serversMenu.AddMenuOption(serverItemName, (_, _) => ShowServerInfo(player, server, info, serversMenu));
             }
             serversMenu.Open(player);
+        }
+
+        private void ShowServerInfo(CCSPlayerController player, KeyValuePair<string, ServerInfo> server, InfoResponse? info, IMenu serversMenu)
+        {
+            if (info != null)
+            {
+                ShowServerInfoMenu(player, server.Value.DisplayName, info, serversMenu, server.Value);
+            }
+            else
+            {
+                player.PrintToChat($"{Localizer["ServerOffline", server.Value.DisplayName ?? "Unknown Server"]}");
+            }
         }
 
         private void ShowServerInfoMenu(CCSPlayerController player, string? displayName, InfoResponse info, IMenu serversMenu, ServerInfo server)
@@ -136,8 +156,11 @@ namespace ServersInfo
             if (displayName == null || server.IP == null) return;
 
             var serverInfoMenu = _menuApi!.NewMenu(Localizer["ServerMenuTitle", displayName], OpenBackMenu(serversMenu));
+
+            string displayIP = string.IsNullOrEmpty(server.AliasIP) ? server.IP : server.AliasIP;
+
             serverInfoMenu.AddMenuOption(Localizer["ShowInfoAction"], (_, _) =>
-                player.PrintToChat($"{Localizer["ConnectMessage", info.Name, info.Map, info.Players, info.MaxPlayers, server.IP]}"));
+                player.PrintToChat($"{Localizer["ConnectMessage", info.Name, info.Map, info.Players, info.MaxPlayers, displayIP]}"));
 
             if (info.Players > 0)
             {
@@ -162,7 +185,9 @@ namespace ServersInfo
             {
                 foreach (var playerInfo in players.Players)
                 {
-                    playersMenu.AddMenuOption(playerInfo.Name, (_, _) => { }, true);
+                    string playerDetails = $"{playerInfo.Name} | {playerInfo.Duration.Minutes} minutes";
+                    playersMenu.AddMenuOption(playerDetails, (_, _) => { }, true);
+                    playersMenu.AddMenuOption(Localizer["PlayersInfo", playerInfo.Name, playerInfo.Duration.Hours, playerInfo.Duration.Minutes, playerInfo.Duration.Seconds], (_, _) => { }, true);
                 }
             }
             playersMenu.Open(player);
@@ -170,26 +195,24 @@ namespace ServersInfo
 
         private async Task<PlayerResponse?> GetServerPlayers(string gameIp)
         {
-            var ipParts = gameIp.Split(':');
-            if (ipParts.Length != 2 || !int.TryParse(ipParts[1], out int port))
-            {
-                Logger.LogError($"Invalid game IP format: {gameIp}");
-                return null;
-            }
+            var (connectIP, port) = ParseIP(gameIp);
+            if (port == null) return null;
 
-            var queryConnection = new QueryConnection { Host = ipParts[0], Port = port };
+            var queryConnection = new QueryConnection { Host = connectIP, Port = port.Value };
             try
             {
                 ((IQueryConnection)queryConnection).Connect(5000);
-                var players = await ((IQueryConnection)queryConnection).GetPlayersAsync();
-                ((IQueryConnection)queryConnection).Disconnect();
-                return players;
+                return await ((IQueryConnection)queryConnection).GetPlayersAsync();
             }
             catch (Exception ex)
             {
                 Logger.LogError($"Failed to query server players from {gameIp}: {ex.Message}");
+                return null;
             }
-            return null;
+            finally
+            {
+                ((IQueryConnection)queryConnection).Disconnect();
+            }
         }
 
         private static Action<CCSPlayerController> OpenBackMenu(IMenu menu) => p => menu.Open(p);
