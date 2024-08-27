@@ -85,5 +85,11 @@ namespace ServersInfo
 
         [JsonPropertyName("order")]
         public bool Order { get; set; }
+
+        [JsonPropertyName("show_categories")]
+        public bool ShowCategories { get; set; } = true;
+
+        [JsonPropertyName("log_errors")]
+        public bool LogErrors { get; set; } = true;
     }
 }
